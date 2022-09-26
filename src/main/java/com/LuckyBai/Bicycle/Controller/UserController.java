@@ -148,7 +148,7 @@ public class UserController {
         if (!Objects.equals(s,code)){
             return Result.error("验证码错误");
         }
-        redisTemplate.delete(key);
+//        redisTemplate.delete(key);
         LambdaQueryWrapper<Users> queryWrapper = new LambdaQueryWrapper<>();
         queryWrapper.eq(Users::getPhone, users.getPhone());
         Users em = usersService.getOne(queryWrapper);
