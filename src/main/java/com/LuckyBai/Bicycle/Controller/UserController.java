@@ -4,9 +4,11 @@ import com.LuckyBai.Bicycle.Common.BaseContext;
 import com.LuckyBai.Bicycle.Common.Result;
 import com.LuckyBai.Bicycle.Entity.Users;
 import com.LuckyBai.Bicycle.Service.UsersService;
+import com.LuckyBai.Bicycle.dto.UserCodeDto;
 import com.LuckyBai.Bicycle.utils.PhoneUtils;
 import com.LuckyBai.Bicycle.utils.ValidateCodeUtils;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.extension.api.R;
 import org.apache.commons.lang.StringUtils;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -22,6 +24,7 @@ import javax.servlet.http.HttpSession;
 import org.springframework.data.redis.core.RedisTemplate;
 
 import java.util.Objects;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
 @Slf4j
@@ -36,7 +39,7 @@ public class UserController {
 
     @Resource
     @Autowired
-    private UsersService UsersService;
+    private UsersService usersService;
 
     @Autowired
     private RedisTemplate redisTemplate;
@@ -46,12 +49,12 @@ public class UserController {
 
         LambdaQueryWrapper<Users> queryWrapper = new LambdaQueryWrapper<>();
         queryWrapper.eq(Users::getPhone, users.getPhone());
-        Users em = UsersService.getOne(queryWrapper);
+        Users em = usersService.getOne(queryWrapper);
 
         if (em == null) {
             return Result.error("登录失败");
         }
-        String md5Password = getMD5Password(users.getPassword(), users.getSalt());
+        String md5Password = getMD5Password(users.getPassword(), em.getSalt());
         if (!md5Password.equals(em.getPassword())) {
             return Result.error("登录失败mima");
         }
@@ -97,42 +100,64 @@ public class UserController {
     }
 
     @PostMapping("/msglogin")
-    public Result<String> Msglogin(@RequestBody Users users,@RequestBody String code){
+    public Result<String> Msglogin(@RequestBody UserCodeDto users){
         //获取手机号
         String phone = users.getPhone();
+        String code = users.getCode();
         //验证手机格式
         if (!PhoneUtils.isMobile(phone)){
             return Result.error("手机格式错误");
         }
         ValueOperations ops = redisTemplate.opsForValue();
         String key = PHONE_KEY + phone;
-        String codeValue = ops.get(key).toString();
-        if (codeValue.isEmpty()){
+        Object codeValue = ops.get(key);
+        if (codeValue == null){
             return Result.error("验证码过期");
         }
-        if (!Objects.equals(codeValue,code)){
+        if (!Objects.equals(codeValue.toString(),code)){
             return Result.error("验证码错误");
         }
-        BaseContext.setCurrentId((long) Integer.parseInt(users.getPhone()));
+        BaseContext.setCurrentId(Long.parseLong(users.getPhone()));
+        redisTemplate.delete(key);
         return Result.success("成功");
     }
 
-    public Result<Users> register(@RequestBody Users users,HttpSession session) {
+    @PostMapping("/register")
+    public Result<Users> register(@RequestBody UserCodeDto users) {
         log.info("phone:{}", users.getPhone());
         log.info("password:{}", users.getPassword());
-        String phone = (String) session.getAttribute("phone");
+        String phone = users.getPhone();
+        String password = users.getPassword();
+        String code = users.getCode();
         if (StringUtils.isEmpty(phone)) {
-//            return Result.error("手机号不允许为空");
+            return Result.error("手机号不允许为空");
         }
-        if (StringUtils.isEmpty(users.getPassword())) {
+        if (StringUtils.isEmpty(password)) {
             return Result.error("密码不允许为空");
         }
-        users.setPhone(phone);
+        if (StringUtils.isEmpty(code)){
+            return Result.error("验证码不能为空");
+        }
+        String key = PHONE_KEY+phone;
+        Object o = new Object();
+        o = redisTemplate.opsForValue().get(key);
+        if (o == null){
+            return Result.error("验证码失效");
+        }
+        String s = o.toString();
+        if (!Objects.equals(s,code)){
+            return Result.error("验证码错误");
+        }
+        redisTemplate.delete(key);
         LambdaQueryWrapper<Users> queryWrapper = new LambdaQueryWrapper<>();
         queryWrapper.eq(Users::getPhone, users.getPhone());
-        Users em = UsersService.getOne(queryWrapper);
+        Users em = usersService.getOne(queryWrapper);
         if (em == null) {
-            UsersService.save(users);
+            String salt = UUID.randomUUID().toString().toUpperCase();
+            users.setSalt(salt);
+            String md5Password = getMD5Password(password, salt);
+            users.setPassword(md5Password);
+            usersService.save(users);
             log.info("Users:{}", users);
             return Result.success(users);
         } else {
@@ -140,9 +165,10 @@ public class UserController {
         }
     }
 
-//    @PostMapping("/logout")
-//    public Result<String> logout(HttpServletRequest request) {
-//        request.getSession().removeAttribute("Users");
-//        return Result.success("退出成功");
-//    }
+    @PostMapping("/logout")
+    public Result<String> logout(HttpServletRequest request) {
+        request.getSession().removeAttribute("Users");
+        System.err.println("结束！");
+        return Result.success("退出成功");
+    }
 }
